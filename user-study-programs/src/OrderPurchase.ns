@@ -1,0 +1,179 @@
+(* Written by Carmen Torres Lopez
+*
+* This implementation has been inspired in other actor language implementations
+* such as E and AmbientTalk.
+* - Stanley, T., Close, T., & Miller, M. S. (2009). Causeway: A message-oriented distributed debugger.
+* - Gonzalez Boix, E., Noguera, C., & De Meuter, W. (2014). Distributed debugging for mobile networks.
+* Journal of Systems and Software, 90, 76-90.
+*)
+class OrderPurchase usingPlatform: platform = Value (
+| private actors = platform actors.
+  private Vector = platform kernel Vector.
+  private TransferArray = platform kernel TransferArray.
+|)(
+
+  public class Customer new: customerId website: web = (
+    | private customerId = customerId.
+      private website = web.
+    |)(
+
+    public buy: items = (
+      | checkoutPromise |
+      checkoutPromise:: website <-: checkoutShoppingCart: customerId items: items.
+
+      ^ checkoutPromise whenResolved: [:result |
+          result > 1
+          ifTrue:[('- The order has been placed for '+ result + ' products.') println.]
+          ifFalse:[('- The order has been placed for '+ result + ' product.') println.].
+      ]
+    )
+  )
+
+  public class Website new: store account: account shipper: shipper db: database = (
+  | private store = store.
+    private account = account.
+    private shipper = shipper.
+    private database = database.
+  |)(
+
+   public checkoutShoppingCart: customerId items: items = (
+     | shoppingCart completionPP accountPromise shipperPromise productsPP productsInStock resolved |
+      completionPP:: actors createPromisePair.
+      productsPP:: actors createPromisePair.
+      productsInStock:: Vector new.
+      resolved:: false.
+
+      shoppingCart:: items.
+      ('- You will buy '+ (shoppingCart size) + ' products. ') println.
+
+      shoppingCart do:[:product |
+        | existPromise |
+        existPromise:: store <-: productInStock: product database: database.
+        existPromise whenResolved:[: available |
+          available ifTrue:[
+            productsInStock append: product.
+            productsInStock size = shoppingCart size
+            ifTrue:[
+              resolved ifFalse:[
+                resolved:: true.
+                productsPP resolve: true
+              ]
+            ]
+          ]
+          ifFalse:[
+            resolved ifFalse:[
+              resolved:: true.
+              productsPP resolve: false
+            ]
+          ]
+        ].
+      ].
+
+      accountPromise:: account <-: checkCredit: customerId database: database.
+      shipperPromise:: shipper <-: canDeliver: customerId database: database.
+
+      productsPP promise, accountPromise, shipperPromise whenResolved:[: answerService |
+        ((answerService at: 1) and: [(answerService at: 2) and: [(answerService at: 3)]])
+        ifTrue:[ completionPP resolver resolve: productsInStock size ]
+      ].
+
+     ^ completionPP promise
+   )
+  )
+
+  public class Store = ()(
+
+    public productInStock: item database: database = (
+      | stockPromise existPP flag |
+
+      existPP:: actors createPromisePair.
+      flag:: false.
+
+      stockPromise:: database <-: getStock.
+      (stockPromise <-: contains: item) whenResolved:[:exist |
+         exist ifTrue:[
+           stockPromise <-: remove: item.
+           flag:: false.
+         ].
+         existPP resolve: flag.
+        ].
+
+      ^ existPP promise
+    )
+  )
+
+  public class Account = ()(
+
+    public checkCredit: customerId database: database = (
+      ^ database <-: isValidPayment: customerId
+    )
+  )
+
+  public class Shipper = ()(
+
+    public canDeliver: customerId database: database = (
+      ^ database <-: isShipperAvailable: customerId
+    )
+  )
+
+  public class Database = (
+    | private stock = init. |
+  )(
+
+    private init = (
+      | s |
+        s:: Vector new.
+        s append: 'hdd'.
+        s append: 'ipad'.
+        s append: 'phone'.
+        s append: 'screen'.
+        s append: 'laptop'.
+      ^ s
+    )
+
+    public getStock = (
+      ^ stock
+    )
+
+    public isValidPayment: customerId = (
+      ^ true
+    )
+
+    public isShipperAvailable: customerId = (
+      ^ true
+    )
+
+  )
+
+   public main: args = (
+     | customer store account shipper website database items buyPromise timeout completionPP |
+     timeout:: 3000.
+
+     completionPP:: actors createPromisePair.
+
+     '[ORDER PURCHASE APPLICATION] Starting...\n' println.
+     items:: TransferArray new: 2.
+     items at: 1 put: 'phone'.
+     items at: 2 put: 'laptop'.
+
+     store:: (actors createActorFromValue: Store) <-: new.
+     account:: (actors createActorFromValue: Account)  <-: new.
+     shipper:: (actors createActorFromValue: Shipper)  <-: new.
+     database:: (actors createActorFromValue: Database) <-: new.
+     website:: (actors createActorFromValue: Website) <-: new: store account: account shipper: shipper db: database.
+     customer:: (actors createActorFromValue: Customer) <-: new: 'Joe' website: website.
+
+     buyPromise:: customer <-: buy: items.
+
+     actors after: timeout do: [
+      'Program exit due to TIMEOUT' println.
+       completionPP resolve: 1.
+     ].
+
+     completionPP resolve: buyPromise.
+
+     ^ completionPP promise whenResolved: [:result |
+            '\n[ORDER PURCHASE APPLICATION] Ending.' println.
+     ]
+   )
+)

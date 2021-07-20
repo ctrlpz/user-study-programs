@@ -1,0 +1,137 @@
+(* Written by Dominik Aumayr
+* (Extended by Carmen Torres Lopez)
+*
+* This implementation has been inspired from:
+* - Ueda, T., Nakaike, T., & Ohara, M. (2016, September). Workload characterization for microservices.
+* In 2016 IEEE international symposium on workload characterization (IISWC) (pp. 1-10). IEEE.
+* - Aumayr, D., Marr, S., Béra, C., Boix, E. G., & Mössenböck, H. (2018, September).
+* Efficient and deterministic record & replay for actor languages.
+* In Proceedings of the 15th International Conference on Managed Languages & Runtimes (pp. 1-14).
+*)
+class FlightBooking usingPlatform: platform = Value (
+| private actors = platform actors.
+  private Array = platform kernel Array.
+  private TransferArray = platform kernel TransferArray.
+  private harness = (platform system loadModule: 'core-lib/Benchmarks/Harness.ns' nextTo: self) usingPlatform: platform.
+  private Random = harness Random.
+  private Pair = platform kernel Pair.
+
+  private numCustomers = 3.
+  private numFlights = 2.
+  private numSeats = 2. (* number of seats that can be reserved by plane *)
+|)(
+
+  public class Database = ()(
+
+    public checkSeat: flightId seat: seatId = (
+      ^ seatId = 1 or:[seatId = 2]
+    )
+  )
+
+  public class Website new: completionRes db: database = (
+  | private completionRes = completionRes.
+    private database = database.
+    private finishedCustomers ::= 0.
+    private flightPrices = TransferArray new: numFlights withAll: 50.
+    private bookings = TransferArray new: numCustomers.
+    private resolved ::= false.
+  |)(
+
+   public requestFlightPrices = (
+      ^ flightPrices.
+   )
+
+   public createBooking: customerId flight: flightId seat: seatId = (
+      | price pSeat completionPP |
+       completionPP:: actors createPromisePair.
+
+       pSeat:: database <-: checkSeat: flightId seat: seatId.
+       pSeat whenResolved:[: seatAvailable|
+         seatAvailable ifTrue:[
+            price:: (flightPrices at: flightId).
+            bookings at: customerId put: (Pair withKey: flightId andValue: price).
+            flightPrices at: flightId put: (price + 10). (* increase flight price *)
+            completionPP resolver resolve: price.
+        ]
+       ].
+
+      ^ completionPP promise
+   )
+
+   public pay: customer customerId: customerId flight: flightId amount: amount = (
+     | customerBooking |
+          customerBooking:: bookings at: customerId.
+            (flightId = (customerBooking key) and:[amount = (customerBooking value)])
+            ifTrue:[
+             customer <-: confirmBooking: flightId amount: amount.
+            ]
+           ifFalse:[
+              ('>> ERROR in Website: Payment FAILED for customer '+ customerId) println.
+              resolved ifFalse: [
+                completionRes resolve: false.
+                resolved:: true ]
+           ].
+   )
+
+    public done = (
+      finishedCustomers:: finishedCustomers + 1.
+      finishedCustomers = numCustomers ifTrue: [
+        resolved ifFalse:[
+          completionRes resolve: true.
+          resolved:: true ] ]
+    )
+  )
+
+  public class Customer new: customerId website: web = (
+  | private customerId = customerId.
+    private web = web.
+    private rand = Random new: customerId + 73425.
+  |)(
+    public bookFlight = (
+      | flightId seatId bookingPromise |
+        (web <-: requestFlightPrices) whenResolved: [:flights |
+          flightId:: 1 + (rand next % numFlights).
+          seatId:: 1 + (rand next % numSeats).
+
+          bookingPromise:: web <-: createBooking: customerId flight: flightId seat: seatId.
+          bookingPromise whenResolved:[: price |
+          | paymentPromise |
+            paymentPromise:: web <-: pay: self customerId: customerId flight: flightId amount: (flights at: flightId).
+          ].
+        ].
+    )
+
+    public confirmBooking: flightId amount: amount = (
+       ('Booking confirmed for customer ' + customerId) println.
+       web <-: done
+    )
+  )
+
+  public main: args = (
+    | customers website database payment completionPP timeout |
+    timeout:: 3000.
+
+    '[FLIGHT BOOKING APPLICATION] Starting...\n' println.
+
+    completionPP:: actors createPromisePair.
+    database:: (actors createActorFromValue: Database) <-: new.
+    website:: (actors createActorFromValue: Website) <-: new: completionPP resolver db: database.
+
+    customers:: Array new: numCustomers.
+    customers doIndexes: [:i |
+      | c |
+      c:: (actors createActorFromValue: Customer) <-: new: i website: website.
+      customers at: i put: c ].
+
+      customers do: [:c | c <-: bookFlight ].
+
+      actors after: timeout do: [
+        'Program exit due to TIMEOUT' println.
+        completionPP resolve: 1.
+      ].
+
+    ^ completionPP promise whenResolved:[: r|
+         '\n[FLIGHT BOOKING APPLICATION] Ending.' println.
+    ].
+  )
+)
