@@ -1,0 +1,93 @@
+(*  Written by Carmen Torres Lopez
+ *
+ * Program that computes the triangle perimeter given the length of two of its sides.
+ * All triangles are considered to be right triangles. Then, we applied the
+ * Pythagoras theorem a2 + b2 = c2 to compute the third side.
+ *)
+class PythagorasCalculator usingPlatform: platform = Value (
+| private actors = platform actors.
+  private Array = platform kernel Array.
+  private harness = (platform system loadModule: 'core-lib/Benchmarks/Harness.ns' nextTo: self) usingPlatform: platform.
+  private Random = harness Random.
+  private numberStudents = 2.
+|)(
+  public class Math = (
+  )(
+    public add: x and: y = (
+      ^ x + y
+    )
+
+    public square: x = (
+      ^ x * x
+    )
+
+    public trianglePerimeter: a b: b c: c = (
+      ^ add: (add: a and: b) and: c.
+    )
+  )
+
+  public class Calculator new: studentId math: math = (
+    | private studentId ::= studentId.
+      private math = math.
+      private rand = Random new: studentId + 73425.
+    |
+  )(
+    public computePerimeter = (
+      | sideA sideB squareA squareB perimeterPP |
+      perimeterPP:: actors createPromisePair.
+
+      sideA:: 1 + (rand next % numberStudents).
+      sideB:: 1 + (rand next % numberStudents).
+
+      squareA:: math <-: square: sideA.
+      squareB:: math <-: square: sideB.
+
+      squareA, squareB whenResolved:[:squares |
+        | squareSumP hypotenusePromise |
+        squareSumP:: math <-: add: (squares at: 1) and: (squares at: 2).
+        hypotenusePromise:: squareSumP <-: sqrt.
+        hypotenusePromise whenResolved:[:sideC |
+          | perimeterPromise |
+          perimeterPromise:: (math <-: trianglePerimeter: sideA b: sideB c: sideC).
+          perimeterPromise whenResolved:[:perimeter |
+            ('Student assignment: '+ studentId + ', Triangle sides: A = '+sideA+
+            ', B = '+sideB+ ', C = '+sideC + ', Perimeter: '+perimeter) println.
+            perimeterPP resolve: perimeter.
+          ].
+        ].
+      ].
+
+      ^ perimeterPP promise
+    )
+  )
+
+  public main: args = (
+    | math a b completionPP calculators counter |
+    completionPP:: actors createPromisePair.
+    math:: (actors createActorFromValue: Math) <-: new.
+    calculators:: Array new: numberStudents.
+    counter:: 0.
+
+    '[PYTHAGORAS CALCULATOR] Starting...\n' println.
+
+    calculators doIndexes: [:i |
+      | c |
+      c:: (actors createActorFromValue: Calculator) <-: new: i math: math.
+      calculators at: i put: c
+    ].
+
+    calculators do: [:c |
+      c <-: computePerimeter whenResolved:[:p |
+         counter:: counter + 1.
+         counter = numberStudents
+           ifTrue: [
+             completionPP resolve: true.
+           ].
+      ].
+    ].
+
+    ^ completionPP promise whenResolved:[:r |
+        '\n[PYTHAGORAS CALCULATOR] Ending.' println.
+    ]
+  )
+)
