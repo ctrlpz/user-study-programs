@@ -18,7 +18,10 @@ class PythagorasCalculator usingPlatform: platform = Value (
     )
 
     public square: x = (
-      ^ x * x
+      | squared |
+      squared:: x * x.
+
+      ^ squared
     )
 
     public trianglePerimeter: a b: b c: c = (
